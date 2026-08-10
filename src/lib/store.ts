@@ -32,19 +32,32 @@ function writeStore(items: IntentAnalysis[]) {
 }
 
 export function listAnalyses(limit = 50): IntentAnalysis[] {
-  return ensureStore()
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, limit);
+  try {
+    return ensureStore()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
 }
 
 export function getAnalysis(id: string): IntentAnalysis | undefined {
-  return ensureStore().find((item) => item.id === id);
+  try {
+    return ensureStore().find((item) => item.id === id);
+  } catch {
+    return undefined;
+  }
 }
 
 export function saveAnalysis(analysis: IntentAnalysis): IntentAnalysis {
-  const items = ensureStore();
-  items.unshift(analysis);
-  // 只保留最近 500 条，避免文件无限增大
-  writeStore(items.slice(0, 500));
+  try {
+    const items = ensureStore();
+    items.unshift(analysis);
+    // 只保留最近 500 条，避免文件无限增大
+    writeStore(items.slice(0, 500));
+  } catch (error) {
+    // 某些云平台磁盘只读：分析仍可返回给调用方，只是不落盘
+    console.error("[store] write failed:", error);
+  }
   return analysis;
 }

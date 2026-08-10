@@ -3,13 +3,14 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import { analyzePullRequest } from "@/lib/analyze";
 import { saveAnalysis } from "@/lib/store";
+import { assertDiffSize, clientIp, rateLimit } from "@/lib/security";
 import type { IntentAnalysis } from "@/lib/types";
 
 const BodySchema = z.object({
-  title: z.string().default(""),
-  body: z.string().optional(),
-  commitMessages: z.array(z.string()).optional(),
-  diff: z.string().min(1, "diff 不能为空"),
+  title: z.string().max(500).default(""),
+  body: z.string().max(20_000).optional(),
+  commitMessages: z.array(z.string().max(500)).max(100).optional(),
+  diff: z.string().min(1, "diff 不能为空").max(200_000),
   files: z
     .array(
       z.object({
@@ -20,6 +21,7 @@ const BodySchema = z.object({
         patch: z.string().optional(),
       }),
     )
+    .max(500)
     .optional(),
   source: z.enum(["demo", "manual", "webhook"]).optional(),
 });
@@ -29,9 +31,20 @@ const BodySchema = z.object({
  * 手动/Demo 分析入口：不依赖 GitHub Webhook，方便本地先跑通。
  */
 export async function POST(req: NextRequest) {
+  const ip = clientIp(req);
+  const limited = rateLimit(`analyze:${ip}`, 20, 60_000);
+  if (!limited.ok) {
+    return NextResponse.json(
+      { ok: false, error: `请求过于频繁，请 ${limited.retryAfterSec}s 后重试` },
+      { status: 429 },
+    );
+  }
+
   try {
     const json = await req.json();
     const input = BodySchema.parse(json);
+    assertDiffSize(input.diff);
+
     const result = await analyzePullRequest({
       title: input.title,
       body: input.body,
@@ -55,7 +68,12 @@ export async function POST(req: NextRequest) {
       },
     };
 
-    saveAnalysis(analysis);
+    try {
+      saveAnalysis(analysis);
+    } catch (storeError) {
+      console.error("[analyze] save failed (non-fatal):", storeError);
+    }
+
     return NextResponse.json({ ok: true, analysis });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";

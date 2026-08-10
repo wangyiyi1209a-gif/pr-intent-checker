@@ -22,12 +22,32 @@ export default function HomePage() {
             先跑 Demo（无需 GitHub）
           </Link>
           <Link
+            href="/status"
+            className="rounded-xl border border-white/15 bg-white/5 px-5 py-2.5 font-medium text-zinc-100 hover:bg-white/10"
+          >
+            上线就绪检查
+          </Link>
+          <Link
             href="/setup"
             className="rounded-xl border border-white/15 bg-white/5 px-5 py-2.5 font-medium text-zinc-100 hover:bg-white/10"
           >
-            配置 GitHub App 上线
+            配置说明
           </Link>
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-3">
+        <h2 className="text-xl font-medium text-zinc-100">PR 是什么？（30 秒搞懂）</h2>
+        <p className="text-zinc-300 leading-relaxed">
+          <strong className="text-zinc-50">PR = Pull Request（拉取请求）</strong>
+          ：在 GitHub 上，开发者改完代码后发起的「请把我的改动合并进主分支」的请求。
+          里面有标题、说明文字，以及真正改动的代码（diff）。
+        </p>
+        <p className="text-zinc-400 leading-relaxed">
+          本工具专门检查：文字里说的意图，和 diff 里真实改动是否一致。不一致就叫
+          <span className="text-amber-300">意图漂移</span>
+          ——例如标题写「修 README 错别字」，代码却改了登录鉴权。
+        </p>
       </section>
 
       <section className="grid gap-4 md:grid-cols-3">
@@ -42,7 +62,7 @@ export default function HomePage() {
           },
           {
             title: "可上线可展示",
-            desc: "带 Dashboard、健康检查、Docker，方便写进简历与面试演示。",
+            desc: "含 Status 自检、限流、Docker / Render 配置，方便写进简历。",
           },
         ].map((card) => (
           <div
@@ -56,19 +76,28 @@ export default function HomePage() {
       </section>
 
       <section className="rounded-2xl border border-white/10 bg-black/20 p-6">
-        <h2 className="mb-3 text-xl font-medium">推荐学习路径（今天就能出结果）</h2>
+        <h2 className="mb-3 text-xl font-medium">完善到可上线：两步走</h2>
         <ol className="list-decimal space-y-2 pl-5 text-zinc-300">
           <li>
-            <code className="text-emerald-300">npm run dev</code> → 打开{" "}
+            <strong className="text-zinc-100">A 档</strong>：部署到 Render，让{" "}
             <Link href="/demo" className="text-emerald-300 underline">
               /demo
             </Link>{" "}
-            用样例看分数
+            公网可访问（简历就能放链接）
           </li>
-          <li>配置 <code className="text-emerald-300">.env.local</code>（可选 OpenAI）</li>
-          <li>按 Setup 页创建 GitHub App + ngrok 本地联调</li>
-          <li>Docker / Railway 部署公网，安装到真实仓库</li>
+          <li>
+            <strong className="text-zinc-100">B 档</strong>：创建 GitHub App，装到仓库，开
+            PR 自动出评论（完整产品）
+          </li>
         </ol>
+        <p className="mt-4 text-zinc-400">
+          手把手清单见仓库 <code className="text-emerald-300">docs/GO_LIVE.md</code>
+          ，部署后打开{" "}
+          <Link href="/status" className="text-emerald-300 underline">
+            /status
+          </Link>{" "}
+          对照检查。
+        </p>
       </section>
     </div>
   );
