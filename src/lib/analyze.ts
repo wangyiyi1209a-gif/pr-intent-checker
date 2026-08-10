@@ -36,16 +36,109 @@ function scoreToLevel(score: number, unclear: boolean): DriftLevel {
   return "major_drift";
 }
 
+const STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "that",
+  "this",
+  "when",
+  "into",
+  "your",
+  "have",
+  "has",
+  "was",
+  "were",
+  "are",
+  "been",
+  "being",
+  "will",
+  "can",
+  "could",
+  "should",
+  "would",
+  "instead",
+  "locally",
+  "tested",
+  "test",
+  "return",
+  "returns",
+  "using",
+  "used",
+  "use",
+  "only",
+  "just",
+  "also",
+  "than",
+  "then",
+  "them",
+  "they",
+  "their",
+  "about",
+  "after",
+  "before",
+  "over",
+  "under",
+  "fix",
+  "fixed",
+  "fixes",
+  "feat",
+  "chore",
+  "docs",
+  "refactor",
+]);
+
+/** 从 unified diff 里抽出文件路径（Demo 往往不传 files 列表） */
+function extractFilesFromDiff(diff: string): string[] {
+  const names = new Set<string>();
+  for (const line of diff.split("\n")) {
+    const m1 = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (m1) {
+      names.add(m1[2]);
+      continue;
+    }
+    const m2 = line.match(/^\+\+\+ b\/(.+)$/);
+    if (m2 && m2[1] !== "/dev/null") names.add(m2[1]);
+  }
+  return [...names];
+}
+
+function tokenizeMeaningful(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9_\u4e00-\u9fff]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3 && !STOPWORDS.has(t) && !/^\d+$/.test(t));
+}
+
+function pathTokens(fileNames: string[]): string[] {
+  const out: string[] = [];
+  for (const name of fileNames) {
+    out.push(
+      ...name
+        .toLowerCase()
+        .split(/[\\/._-]+/)
+        .filter((t) => t.length >= 3 && !STOPWORDS.has(t)),
+    );
+  }
+  return out;
+}
+
 /**
  * 无 LLM 时的启发式分析：保证本地不开 API Key 也能跑通全流程。
- * 逻辑简单但对「空描述 / 改动面过大」这类明显漂移仍然有用。
+ * 重点抓「范围漂移」（如声称修 README，却改了 auth），而不是逐词硬匹配英文口语。
  */
 export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
   const title = (input.title || "").trim();
   const body = (input.body || "").trim();
   const commits = input.commitMessages || [];
   const files = input.files || [];
-  const fileNames = files.map((f) => f.filename);
+  let fileNames = files.map((f) => f.filename).filter(Boolean);
+  if (!fileNames.length) {
+    fileNames = extractFilesFromDiff(input.diff);
+  }
 
   const statedParts = [title, body, ...commits].filter(Boolean);
   const statedIntent = statedParts.length
@@ -55,7 +148,7 @@ export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
   const additions = files.reduce((s, f) => s + (f.additions || 0), 0);
   const deletions = files.reduce((s, f) => s + (f.deletions || 0), 0);
   const actualChanges = fileNames.length
-    ? `共改动 ${fileNames.length} 个文件 (+${additions}/-${deletions})：${fileNames.slice(0, 12).join(", ")}${fileNames.length > 12 ? " ..." : ""}`
+    ? `共改动 ${fileNames.length} 个文件${files.length ? ` (+${additions}/-${deletions})` : ""}：${fileNames.slice(0, 12).join(", ")}${fileNames.length > 12 ? " ..." : ""}`
     : `根据 diff 文本长度约 ${input.diff.length} 字符判断存在代码改动`;
 
   const drifts: AnalyzeResult["drifts"] = [];
@@ -63,7 +156,7 @@ export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
   const recommendations: string[] = [];
 
   const unclear = !title && !body;
-  let score = 78;
+  let score = 88;
 
   if (unclear) {
     score = 40;
@@ -77,30 +170,60 @@ export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
     matchedPoints.push("存在可读的标题/描述，可作为意图基线。");
   }
 
-  // 标题关键词是否在文件名/diff 中出现（粗匹配）
-  const tokens = `${title} ${body}`
-    .toLowerCase()
-    .split(/[^a-z0-9_\u4e00-\u9fff]+/)
-    .filter((t) => t.length >= 3)
-    .slice(0, 20);
+  const intentText = `${title} ${body}`.toLowerCase();
+  const intentTokens = tokenizeMeaningful(`${title} ${body}`);
+  const fileToks = pathTokens(fileNames);
   const haystack = `${input.diff}\n${fileNames.join("\n")}`.toLowerCase();
-  const hit = tokens.filter((t) => haystack.includes(t));
-  const miss = tokens.filter((t) => !haystack.includes(t));
 
-  if (tokens.length >= 3) {
-    const ratio = hit.length / tokens.length;
-    score = Math.round(score * 0.4 + ratio * 100 * 0.6);
-    if (ratio >= 0.5) {
-      matchedPoints.push(`描述中的关键用语与 diff/文件有一定重合（命中 ${hit.length}/${tokens.length}）。`);
+  // 路径/标识符重合（比英文口语词更可靠）
+  const pathHits = intentTokens.filter(
+    (t) => fileToks.includes(t) || haystack.includes(t),
+  );
+  if (intentTokens.length > 0) {
+    const ratio = pathHits.length / intentTokens.length;
+    if (ratio >= 0.25 || pathHits.length >= 2) {
+      matchedPoints.push(
+        `意图用语与文件/代码标识有重合：${[...new Set(pathHits)].slice(0, 6).join(", ")}`,
+      );
+      score = Math.max(score, 86);
     }
-    if (miss.length && ratio < 0.45) {
-      drifts.push({
-        title: "描述关键词与代码关联弱",
-        reason: `以下描述用语在 diff/文件名中较少出现：${miss.slice(0, 8).join(", ")}`,
-        severity: "medium",
-      });
-      score = Math.min(score, 62);
-    }
+  }
+
+  // 声称只做 docs/typo，却改了业务代码 → 强漂移信号
+  const claimsDocsOnly =
+    /\b(readme|typo|spelling|docs?|documentation|错别字|文档)\b/i.test(intentText) &&
+    !/\b(auth|session|login|api|security|dependenc|refactor|feature)\b/i.test(intentText);
+  const touchesCode = fileNames.some(
+    (f) =>
+      !/\.(md|txt|rst)$/i.test(f) &&
+      !/(^|\/)docs?\//i.test(f) &&
+      !/readme/i.test(f),
+  );
+  const touchesSensitive = fileNames.some((f) =>
+    /(auth|session|login|security|password|jwt|oauth)/i.test(f),
+  );
+  const touchesDeps = fileNames.some((f) =>
+    /(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)/i.test(f),
+  );
+
+  if (claimsDocsOnly && (touchesCode || touchesDeps)) {
+    drifts.push({
+      title: "声称文档/错别字修复，却改动了代码或依赖",
+      reason: `描述偏向文档修改，但实际涉及：${fileNames.join(", ")}`,
+      files: fileNames,
+      severity: touchesSensitive ? "high" : "medium",
+    });
+    score = Math.min(score, touchesSensitive ? 38 : 52);
+  }
+
+  if (touchesSensitive && !/\b(auth|session|login|security|jwt|token)\b/i.test(intentText)) {
+    drifts.push({
+      title: "未说明的鉴权/会话相关改动",
+      reason: "diff 触及 auth/session 等敏感路径，但 PR 描述未提及。",
+      files: fileNames.filter((f) => /(auth|session|login|security)/i.test(f)),
+      severity: "high",
+    });
+    score = Math.min(score, 45);
   }
 
   if (fileNames.length >= 15) {
@@ -114,18 +237,25 @@ export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
     recommendations.push("考虑拆分为多个 PR，或在描述中按模块说明为何必须同批改动。");
   }
 
-  // lockfile / 格式化噪音
   const noisy = fileNames.filter((f) =>
     /(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|\.map$)/i.test(f),
   );
-  if (noisy.length && fileNames.length <= 3 && !/lock|deps|dependenc/i.test(`${title} ${body}`)) {
+  if (noisy.length && !/lock|deps|dependenc/i.test(intentText)) {
     drifts.push({
       title: "可能存在未说明的依赖/产物改动",
       reason: `检测到 ${noisy.join(", ")}，但描述未提及依赖或锁文件更新。`,
       files: noisy,
       severity: "low",
     });
-    score = Math.min(score, 72);
+    score = Math.min(score, score > 70 ? 72 : score);
+  }
+
+  // 单文件、意图与路径重合较好 → 抬到 aligned
+  if (!unclear && drifts.every((d) => d.severity === "low") && fileNames.length <= 3 && pathHits.length >= 1) {
+    score = Math.max(score, 90);
+  }
+  if (!unclear && drifts.length === 0 && fileNames.length > 0) {
+    score = Math.max(score, 88);
   }
 
   if (!recommendations.length) {
@@ -144,16 +274,16 @@ export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
     level,
     summary:
       level === "aligned"
-        ? "启发式判断：PR 意图与改动大体一致（未启用 LLM，结果偏保守）。"
+        ? "启发式判断：PR 意图与改动大体一致（当前未启用 LLM）。"
         : level === "unclear"
           ? "启发式判断：意图不清晰，建议先补描述再审查。"
           : "启发式判断：可能存在意图漂移，建议人工核对高亮项。",
     statedIntent,
     actualChanges,
     matchedPoints,
-    drifts,
+    drifts: drifts.filter((d) => !(level === "aligned" && d.severity === "low")),
     recommendations,
-    model: "heuristic-v1",
+    model: "heuristic-v2",
   };
 }
 

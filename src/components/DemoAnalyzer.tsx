@@ -18,6 +18,9 @@ const SAMPLE_ALIGNED = {
 +  return user.profile;
  }
 `,
+  files: [
+    { filename: "src/api/profile.ts", status: "modified", additions: 5, deletions: 1 },
+  ],
 };
 
 const SAMPLE_DRIFT = {
@@ -58,6 +61,11 @@ diff --git a/package.json b/package.json
      "express": "^4.18.0"
    }
 `,
+  files: [
+    { filename: "README.md", status: "modified", additions: 1, deletions: 1 },
+    { filename: "src/auth/session.ts", status: "modified", additions: 20, deletions: 5 },
+    { filename: "package.json", status: "modified", additions: 2, deletions: 0 },
+  ],
 };
 
 function ScoreBadge({ score, level }: { score: number; level: string }) {
@@ -82,6 +90,7 @@ export default function DemoAnalyzer() {
   const [title, setTitle] = useState(SAMPLE_DRIFT.title);
   const [body, setBody] = useState(SAMPLE_DRIFT.body);
   const [diff, setDiff] = useState(SAMPLE_DRIFT.diff);
+  const [files, setFiles] = useState(SAMPLE_DRIFT.files);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<IntentAnalysis | null>(null);
@@ -95,7 +104,7 @@ export default function DemoAnalyzer() {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, body, diff, source: "demo" }),
+        body: JSON.stringify({ title, body, diff, files, source: "demo" }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "analyze failed");
@@ -118,6 +127,7 @@ export default function DemoAnalyzer() {
               setTitle(SAMPLE_ALIGNED.title);
               setBody(SAMPLE_ALIGNED.body);
               setDiff(SAMPLE_ALIGNED.diff);
+              setFiles(SAMPLE_ALIGNED.files);
               setAnalysis(null);
             }}
           >
@@ -130,6 +140,7 @@ export default function DemoAnalyzer() {
               setTitle(SAMPLE_DRIFT.title);
               setBody(SAMPLE_DRIFT.body);
               setDiff(SAMPLE_DRIFT.diff);
+              setFiles(SAMPLE_DRIFT.files);
               setAnalysis(null);
             }}
           >
