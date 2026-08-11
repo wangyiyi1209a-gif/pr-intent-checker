@@ -1,0 +1,8 @@
+{
+  "name": "typo-vs-auth-sandbox",
+  "private": true,
+  "dependencies": {
+    "jsonwebtoken": "^9.0.0",
+    "ioredis": "^5.0.0"
+  }
+}
