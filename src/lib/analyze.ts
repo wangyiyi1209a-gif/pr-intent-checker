@@ -140,10 +140,14 @@ export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
     fileNames = extractFilesFromDiff(input.diff);
   }
 
-  const statedParts = [title, body, ...commits].filter(Boolean);
+  const statedParts = [title, body].filter(Boolean);
   const statedIntent = statedParts.length
-    ? statedParts.join(" | ").slice(0, 400)
-    : "作者未提供清晰的 PR 描述或提交说明";
+    ? `${statedParts.join(" | ").slice(0, 400)}${
+        commits.length ? ` （另有 commit: ${commits.slice(0, 3).join(" / ")}）` : ""
+      }`
+    : commits.length
+      ? `作者未写 PR 描述；commit: ${commits.slice(0, 3).join(" / ")}`
+      : "作者未提供清晰的 PR 描述或提交说明";
 
   const additions = files.reduce((s, f) => s + (f.additions || 0), 0);
   const deletions = files.reduce((s, f) => s + (f.deletions || 0), 0);
@@ -175,9 +179,24 @@ export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
   const fileToks = pathTokens(fileNames);
   const haystack = `${input.diff}\n${fileNames.join("\n")}`.toLowerCase();
 
-  // 路径/标识符重合（比英文口语词更可靠）
+  // 过于泛化的 UI 词不作为强重合（避免 form/button 误抬分）
+  const weakHitTokens = new Set([
+    "form",
+    "button",
+    "page",
+    "list",
+    "search",
+    "ui",
+    "css",
+    "style",
+    "view",
+    "index",
+    "file",
+    "code",
+  ]);
   const pathHits = intentTokens.filter(
-    (t) => fileToks.includes(t) || haystack.includes(t),
+    (t) =>
+      !weakHitTokens.has(t) && (fileToks.includes(t) || haystack.includes(t)),
   );
   if (intentTokens.length > 0) {
     const ratio = pathHits.length / intentTokens.length;
@@ -193,6 +212,31 @@ export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
   const claimsDocsOnly =
     /\b(readme|typo|spelling|docs?|documentation|错别字|文档)\b/i.test(intentText) &&
     !/\b(auth|session|login|api|security|dependenc|refactor|feature)\b/i.test(intentText);
+
+  // 声称「小改/微调/只改间距/单页」，实际多文件或结构性改动 → 范围漂移
+  const claimsMinorScope =
+    /\b(minor|tweak|spacing|one list page|single page|only one|小改|微调|间距|一行|一点点)\b/i.test(
+      intentText,
+    ) && !/\b(refactor|migrate|upgrade|多页|重构|迁移|升级)\b/i.test(intentText);
+
+  const codeLikeFiles = fileNames.filter(
+    (f) =>
+      /\.(vue|tsx?|jsx?|java|go|py|rb|php)$/i.test(f) ||
+      /(^|\/)src\//i.test(f),
+  );
+  // docs/examples 下的 .vue 沙盒也算「示例代码改动」
+  const exampleCodeFiles = fileNames.filter((f) =>
+    /examples\/.*\.(vue|tsx?|jsx?)$/i.test(f),
+  );
+  const structuralSignal =
+    /\bv-model\b|:data\.sync|queryForm\.condition|BaseForm|gd-search-form|migrate|refactor/i.test(
+      input.diff,
+    );
+  const multiFileStructural =
+    codeLikeFiles.length + exampleCodeFiles.length >= 2 ||
+    (fileNames.length >= 3 && structuralSignal) ||
+    additions + (input.diff.match(/^\+/gm)?.length || 0) > 80;
+
   const touchesCode = fileNames.some(
     (f) =>
       !/\.(md|txt|rst)$/i.test(f) &&
@@ -206,7 +250,7 @@ export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
     /(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)/i.test(f),
   );
 
-  if (claimsDocsOnly && (touchesCode || touchesDeps)) {
+  if (claimsDocsOnly && (touchesCode || touchesDeps || exampleCodeFiles.length)) {
     drifts.push({
       title: "声称文档/错别字修复，却改动了代码或依赖",
       reason: `描述偏向文档修改，但实际涉及：${fileNames.join(", ")}`,
@@ -214,6 +258,16 @@ export function heuristicAnalyze(input: AnalyzeInput): AnalyzeResult {
       severity: touchesSensitive ? "high" : "medium",
     });
     score = Math.min(score, touchesSensitive ? 38 : 52);
+  }
+
+  if (claimsMinorScope && multiFileStructural) {
+    drifts.push({
+      title: "声称小范围 UI/间距调整，实际为多文件结构性改动",
+      reason: `描述像「小改」，但 diff 涉及 ${fileNames.length} 个文件（含 ${[...new Set([...codeLikeFiles, ...exampleCodeFiles])].length} 个组件/示例代码），更像列表升级/重构。`,
+      files: fileNames.slice(0, 8),
+      severity: "high",
+    });
+    score = Math.min(score, 42);
   }
 
   if (touchesSensitive && !/\b(auth|session|login|security|jwt|token)\b/i.test(intentText)) {

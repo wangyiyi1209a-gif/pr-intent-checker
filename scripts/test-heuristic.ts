@@ -24,3 +24,24 @@ const drift = heuristicAnalyze({
 
 console.log("ALIGNED", aligned.consistencyScore, aligned.level, aligned.drifts.length);
 console.log("DRIFT", drift.consistencyScore, drift.level, drift.drifts.map((d) => d.title));
+
+const minorUi = heuristicAnalyze({
+  title: "fix: adjust search form button spacing",
+  body: "Minor UI spacing tweak on one list page.",
+  diff: `diff --git a/docs/examples/a.vue b/docs/examples/a.vue
++<BaseForm v-model="queryForm" class="gd-search-form" />
+diff --git a/docs/examples/b.vue b/docs/examples/b.vue
++queryForm.condition
+diff --git a/docs/examples/c.vue b/docs/examples/c.vue
++.form-actions-col { width: 100%; }
+diff --git a/docs/examples/README.md b/docs/examples/README.md
++# sandbox
+`,
+  files: [
+    { filename: "docs/examples/a.vue", additions: 20, deletions: 0 },
+    { filename: "docs/examples/b.vue", additions: 20, deletions: 0 },
+    { filename: "docs/examples/c.vue", additions: 20, deletions: 0 },
+    { filename: "docs/examples/README.md", additions: 5, deletions: 0 },
+  ],
+});
+console.log("MINOR_UI", minorUi.consistencyScore, minorUi.level, minorUi.drifts.map((d) => d.title));
