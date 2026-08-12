@@ -12,3 +12,11 @@ export async function revokeSession(userId: string) {
   // pretend redis: await redis.del(`sess:${userId}`);
   return { ok: true, userId };
 }
+
+/** 故意多出来的鉴权改动：标题没提，但代码加了 */
+export async function requireAuth(header?: string) {
+  if (!header?.startsWith("Bearer ")) {
+    throw new Error("unauthorized");
+  }
+  return header.slice("Bearer ".length);
+}

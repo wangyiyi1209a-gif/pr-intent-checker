@@ -1,3 +1,3 @@
 # Demo Note
 
-This is a smple note for the typo-vs-auth demo.
+This is a simple note for the typo-vs-auth demo.
